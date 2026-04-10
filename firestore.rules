@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: events
+    // Fields:
+    //   - name: string (required)
+    //   - date: string (optional)
+    //   - ownerId: string (required, immutable)
+    //   - createdAt: timestamp (optional)
+    //
+    // Collection: events/{eventId}/agenda
+    // Fields:
+    //   - title: string (required)
+    //   - presenter: string (optional)
+    //   - duration: number (required, positive)
+    //   - type: string (required, enum: presentation, break, lunch)
+    //   - order: number (required)
+    //   - eventId: string (required, immutable)
+    //   - isCompleted: bool (optional)
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isEventOwner(eventId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/events/$(eventId)).data.ownerId == request.auth.uid;
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll(['name', 'ownerId']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.ownerId == request.auth.uid;
+    }
+
+    function isValidAgendaItem(data) {
+      return data.keys().hasAll(['title', 'duration', 'type', 'order', 'eventId']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.duration is number && data.duration > 0 &&
+             data.type in ['presentation', 'break', 'lunch'] &&
+             data.order is number &&
+             data.eventId is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /events/{eventId} {
+      allow read: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidEvent(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.ownerId == request.auth.uid && isValidEvent(request.resource.data) && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+
+      match /agenda/{itemId} {
+        allow read: if isEventOwner(eventId);
+        allow create: if isEventOwner(eventId) && isValidAgendaItem(request.resource.data);
+        allow update: if isEventOwner(eventId) && isValidAgendaItem(request.resource.data) && request.resource.data.eventId == resource.data.eventId;
+        allow delete: if isEventOwner(eventId);
+      }
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+  }
+}

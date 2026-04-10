@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "Event": {
+      "title": "Event",
+      "description": "A high-level event container (e.g., a conference day).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "ownerId"]
+    },
+    "AgendaItem": {
+      "title": "Agenda Item",
+      "description": "An individual presentation, break, or lunch slot.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "presenter": { "type": "string" },
+        "duration": { "type": "number", "description": "Duration in minutes" },
+        "type": { "type": "string", "enum": ["presentation", "break", "lunch"] },
+        "order": { "type": "number" },
+        "startTime": { "type": "string", "format": "date-time", "description": "Calculated or fixed start time" },
+        "isCompleted": { "type": "boolean" },
+        "eventId": { "type": "string" }
+      },
+      "required": ["title", "duration", "type", "order", "eventId"]
+    }
+  },
+  "firestore": {
+    "/events/{eventId}": {
+      "schema": "Event",
+      "description": "Collection of events."
+    },
+    "/events/{eventId}/agenda": {
+      "schema": "AgendaItem",
+      "description": "Subcollection of agenda items for a specific event."
+    }
+  }
+}

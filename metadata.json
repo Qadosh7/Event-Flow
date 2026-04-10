@@ -1,0 +1,5 @@
+{
+  "name": "EventFlow: Dynamic Agenda & Timer",
+  "description": "A dynamic event agenda manager with real-time synchronization, visual timers, and customizable alerts.",
+  "requestFramePermissions": []
+}
