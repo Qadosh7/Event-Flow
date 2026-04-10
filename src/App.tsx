@@ -11,7 +11,14 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
-import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  onAuthStateChanged, 
+  User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
+} from 'firebase/auth';
 import { 
   DndContext, 
   closestCenter, 
@@ -42,6 +49,10 @@ export default function App() {
   const [agenda, setAgenda] = useState<AgendaItem[]>([]);
   const [activeItemIndex, setActiveItemIndex] = useState(0);
   const [isAddingItem, setIsAddingItem] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -103,6 +114,25 @@ export default function App() {
     } catch (error) {
       console.error(error);
       toast.error('Login failed');
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsAuthLoading(true);
+    try {
+      if (authMode === 'signup') {
+        await createUserWithEmailAndPassword(auth, email, password);
+        toast.success('Account created successfully!');
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+        toast.success('Logged in successfully!');
+      }
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || 'Authentication failed');
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -203,26 +233,85 @@ export default function App() {
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-950 p-6">
-        <div className="text-center max-w-md">
+        <Toaster position="top-center" theme="dark" />
+        <div className="w-full max-w-md">
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="mb-8"
+            className="mb-8 text-center"
           >
             <div className="w-20 h-20 bg-emerald-500 rounded-3xl mx-auto flex items-center justify-center mb-6 shadow-2xl shadow-emerald-500/20">
               <CalendarIcon size={40} className="text-white" />
             </div>
             <h1 className="text-5xl font-display font-bold tracking-tight mb-4">EventFlow</h1>
             <p className="text-zinc-400 text-lg leading-relaxed">
-              Manage your event agendas dynamically with real-time timers and drag-and-drop scheduling.
+              Manage your event agendas dynamically.
             </p>
           </motion.div>
-          <button 
-            onClick={handleLogin}
-            className="w-full flex items-center justify-center gap-3 bg-white text-zinc-900 px-8 py-4 rounded-2xl font-bold text-lg hover:bg-zinc-200 transition-all transform hover:scale-[1.02] active:scale-95"
-          >
-            <LogIn size={24} /> Sign in with Google
-          </button>
+
+          <div className="glass p-8 rounded-3xl space-y-6">
+            <h2 className="text-2xl font-bold text-center">
+              {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+            </h2>
+
+            <form onSubmit={handleEmailAuth} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase mb-1.5">Email</label>
+                <input 
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required 
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
+                  placeholder="name@example.com"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase mb-1.5">Password</label>
+                <input 
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required 
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
+                  placeholder="••••••••"
+                />
+              </div>
+              <button 
+                type="submit"
+                disabled={isAuthLoading}
+                className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-bold text-lg hover:bg-emerald-600 transition-all disabled:opacity-50"
+              >
+                {isAuthLoading ? 'Processing...' : (authMode === 'login' ? 'Sign In' : 'Sign Up')}
+              </button>
+            </form>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-zinc-800"></span>
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-zinc-900 px-2 text-zinc-500">Or continue with</span>
+              </div>
+            </div>
+
+            <button 
+              onClick={handleLogin}
+              className="w-full flex items-center justify-center gap-3 bg-white text-zinc-900 px-8 py-4 rounded-2xl font-bold text-lg hover:bg-zinc-200 transition-all transform hover:scale-[1.01] active:scale-95"
+            >
+              <LogIn size={24} /> Google
+            </button>
+
+            <p className="text-center text-sm text-zinc-500">
+              {authMode === 'login' ? "Don't have an account?" : "Already have an account?"}{' '}
+              <button 
+                onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+                className="text-emerald-500 font-bold hover:underline"
+              >
+                {authMode === 'login' ? 'Sign Up' : 'Sign In'}
+              </button>
+            </p>
+          </div>
         </div>
       </div>
     );
