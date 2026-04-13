@@ -54,6 +54,7 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isSupabaseConfigured, setIsSupabaseConfigured] = useState(true);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -78,39 +79,51 @@ export default function App() {
 
     // Fetch initial events
     const fetchEvents = async () => {
-      const { data, error } = await supabase
-        .from('events')
-        .select('*')
-        .eq('owner_id', user.uid)
-        .order('created_at', { ascending: false });
-      
-      if (error) {
-        console.error(error);
-      } else {
-        setEvents(data as any[]);
-        if (data && data.length > 0 && !selectedEvent) {
-          setSelectedEvent(data[0] as any);
+      try {
+        const { data, error } = await supabase
+          .from('events')
+          .select('*')
+          .eq('owner_id', user.uid)
+          .order('created_at', { ascending: false });
+        
+        if (error) {
+          console.error(error);
+        } else {
+          setEvents(data as any[]);
+          if (data && data.length > 0 && !selectedEvent) {
+            setSelectedEvent(data[0] as any);
+          }
         }
+      } catch (e: any) {
+        if (e.message?.includes('Supabase credentials missing')) {
+          setIsSupabaseConfigured(false);
+        }
+        console.error(e);
       }
     };
 
     fetchEvents();
 
     // Subscribe to events changes
-    const channel = supabase
-      .channel('events_changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'events',
-        filter: `owner_id=eq.${user.uid}`
-      }, () => {
-        fetchEvents();
-      })
-      .subscribe();
+    let channel: any;
+    try {
+      channel = supabase
+        .channel('events_changes')
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'events',
+          filter: `owner_id=eq.${user.uid}`
+        }, () => {
+          fetchEvents();
+        })
+        .subscribe();
+    } catch (e) {
+      console.error(e);
+    }
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [user]);
 
@@ -122,43 +135,52 @@ export default function App() {
 
     // Fetch initial agenda
     const fetchAgenda = async () => {
-      const { data, error } = await supabase
-        .from('agenda_items')
-        .select('*')
-        .eq('event_id', selectedEvent.id)
-        .order('order_index', { ascending: true });
-      
-      if (error) {
-        console.error(error);
-      } else {
-        const items = (data || []).map(item => ({
-          ...item,
-          order: item.order_index // Map Supabase column to our type
-        }));
-        setAgenda(items as any[]);
+      try {
+        const { data, error } = await supabase
+          .from('agenda_items')
+          .select('*')
+          .eq('event_id', selectedEvent.id)
+          .order('order_index', { ascending: true });
         
-        const firstActive = items.findIndex(item => !item.is_completed);
-        setActiveItemIndex(firstActive !== -1 ? firstActive : 0);
+        if (error) {
+          console.error(error);
+        } else {
+          const items = (data || []).map(item => ({
+            ...item,
+            order: item.order_index // Map Supabase column to our type
+          }));
+          setAgenda(items as any[]);
+          
+          const firstActive = items.findIndex(item => !item.is_completed);
+          setActiveItemIndex(firstActive !== -1 ? firstActive : 0);
+        }
+      } catch (e) {
+        console.error(e);
       }
     };
 
     fetchAgenda();
 
     // Subscribe to agenda changes
-    const channel = supabase
-      .channel(`agenda_changes_${selectedEvent.id}`)
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'agenda_items',
-        filter: `event_id=eq.${selectedEvent.id}`
-      }, () => {
-        fetchAgenda();
-      })
-      .subscribe();
+    let channel: any;
+    try {
+      channel = supabase
+        .channel(`agenda_changes_${selectedEvent.id}`)
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'agenda_items',
+          filter: `event_id=eq.${selectedEvent.id}`
+        }, () => {
+          fetchAgenda();
+        })
+        .subscribe();
+    } catch (e) {
+      console.error(e);
+    }
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [selectedEvent]);
 
@@ -451,6 +473,15 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 p-6 lg:p-12 overflow-y-auto">
+        {!isSupabaseConfigured && (
+          <div className="mb-8 p-6 bg-amber-500/10 border border-amber-500/30 rounded-3xl text-amber-200">
+            <h3 className="font-bold mb-2">Supabase Not Configured</h3>
+            <p className="text-sm">
+              Please set <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong> in the 
+              <strong> Settings</strong> menu to enable real-time agenda features.
+            </p>
+          </div>
+        )}
         {!selectedEvent ? (
           <div className="h-full flex flex-col items-center justify-center text-center">
             <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center mb-4 text-zinc-700">
