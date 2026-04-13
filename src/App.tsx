@@ -41,6 +41,7 @@ import { Plus, LogIn, LogOut, Calendar as CalendarIcon, Settings, Trash2 } from 
 import { Toaster, toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
+import { supabase } from './lib/supabase';
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -75,17 +76,42 @@ export default function App() {
       return;
     }
 
-    const q = query(collection(db, 'events'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const evts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
-      setEvents(evts);
-      if (evts.length > 0 && !selectedEvent) {
-        const firstEvt = evts[0];
-        setSelectedEvent(firstEvt);
+    // Fetch initial events
+    const fetchEvents = async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('owner_id', user.uid)
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error(error);
+      } else {
+        setEvents(data as any[]);
+        if (data && data.length > 0 && !selectedEvent) {
+          setSelectedEvent(data[0] as any);
+        }
       }
-    });
+    };
 
-    return () => unsubscribe();
+    fetchEvents();
+
+    // Subscribe to events changes
+    const channel = supabase
+      .channel('events_changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'events',
+        filter: `owner_id=eq.${user.uid}`
+      }, () => {
+        fetchEvents();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   useEffect(() => {
@@ -94,17 +120,46 @@ export default function App() {
       return;
     }
 
-    const q = query(collection(db, `events/${selectedEvent.id}/agenda`), orderBy('order', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AgendaItem));
-      setAgenda(items);
+    // Fetch initial agenda
+    const fetchAgenda = async () => {
+      const { data, error } = await supabase
+        .from('agenda_items')
+        .select('*')
+        .eq('event_id', selectedEvent.id)
+        .order('order_index', { ascending: true });
       
-      // Find first non-completed item
-      const firstActive = items.findIndex(item => !item.isCompleted);
-      setActiveItemIndex(firstActive !== -1 ? firstActive : 0);
-    });
+      if (error) {
+        console.error(error);
+      } else {
+        const items = (data || []).map(item => ({
+          ...item,
+          order: item.order_index // Map Supabase column to our type
+        }));
+        setAgenda(items as any[]);
+        
+        const firstActive = items.findIndex(item => !item.is_completed);
+        setActiveItemIndex(firstActive !== -1 ? firstActive : 0);
+      }
+    };
 
-    return () => unsubscribe();
+    fetchAgenda();
+
+    // Subscribe to agenda changes
+    const channel = supabase
+      .channel(`agenda_changes_${selectedEvent.id}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'agenda_items',
+        filter: `event_id=eq.${selectedEvent.id}`
+      }, () => {
+        fetchAgenda();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [selectedEvent]);
 
   const handleLogin = async () => {
@@ -144,11 +199,11 @@ export default function App() {
     if (!name) return;
 
     try {
-      await addDoc(collection(db, 'events'), {
-        name,
-        ownerId: user.uid,
-        createdAt: serverTimestamp()
-      });
+      const { error } = await supabase
+        .from('events')
+        .insert([{ name, owner_id: user.uid }]);
+      
+      if (error) throw error;
       toast.success('Event created!');
     } catch (error) {
       toast.error('Failed to create event');
@@ -166,15 +221,19 @@ export default function App() {
     const presenter = formData.get('presenter') as string;
 
     try {
-      await addDoc(collection(db, `events/${selectedEvent.id}/agenda`), {
-        title,
-        duration,
-        type,
-        presenter,
-        order: agenda.length,
-        isCompleted: false,
-        eventId: selectedEvent.id
-      });
+      const { error } = await supabase
+        .from('agenda_items')
+        .insert([{
+          title,
+          duration,
+          type,
+          presenter,
+          order_index: agenda.length,
+          is_completed: false,
+          event_id: selectedEvent.id
+        }]);
+      
+      if (error) throw error;
       setIsAddingItem(false);
       toast.success('Item added to agenda');
     } catch (error) {
@@ -188,9 +247,12 @@ export default function App() {
     if (!item) return;
 
     try {
-      await updateDoc(doc(db, `events/${selectedEvent.id}/agenda`, id), {
-        isCompleted: !item.isCompleted
-      });
+      const { error } = await supabase
+        .from('agenda_items')
+        .update({ is_completed: !item.isCompleted })
+        .eq('id', id);
+      
+      if (error) throw error;
     } catch (error) {
       toast.error('Update failed');
     }
@@ -206,14 +268,17 @@ export default function App() {
     const newAgenda = arrayMove(agenda, oldIndex, newIndex);
     setAgenda(newAgenda);
 
-    // Update orders in Firestore
+    // Update orders in Supabase
     try {
-      if (!selectedEvent) return;
-      const eventId = (selectedEvent as any).id;
       const updates = newAgenda.map((item: any, index) => 
-        updateDoc(doc(db, 'events', eventId, 'agenda', item.id), { order: index })
+        supabase
+          .from('agenda_items')
+          .update({ order_index: index })
+          .eq('id', item.id)
       );
-      await Promise.all(updates);
+      const results = await Promise.all(updates);
+      const firstError = results.find(r => r.error);
+      if (firstError) throw firstError.error;
     } catch (error) {
       toast.error('Failed to sync order');
     }
@@ -222,8 +287,13 @@ export default function App() {
   const deleteEvent = async (id: string) => {
     if (!confirm('Are you sure you want to delete this event?')) return;
     try {
-      await deleteDoc(doc(db, 'events', id));
-      if (selectedEvent?.id === id) setSelectedEvent(null);
+      const { error } = await supabase
+        .from('events')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      if (selectedEvent && (selectedEvent as any).id === id) setSelectedEvent(null);
       toast.success('Event deleted');
     } catch (error) {
       toast.error('Delete failed');
